@@ -1,0 +1,30 @@
+# === 敏感信息（API Key 等） ===
+.env
+
+# === Python 虚拟环境 ===
+.venv/
+venv/
+env/
+
+# === Python 运行时 ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# === IDE 和编辑器 ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === 操作系统 ===
+Thumbs.db
+.DS_Store
+
+# === 项目数据（可选——如果你想保留历史记录就不要忽略 data/） ===
+# data/
