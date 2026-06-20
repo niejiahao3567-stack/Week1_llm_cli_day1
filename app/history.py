@@ -50,7 +50,7 @@ def save_message(role: str, content: str) -> None:
     message = Message(
         role=role,
         content=content,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now().astimezone().isoformat(),
     )
 
     history_path = _get_history_path()
