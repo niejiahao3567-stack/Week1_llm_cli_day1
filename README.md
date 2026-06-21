@@ -26,7 +26,7 @@ python -m venv .venv
 # macOS / Linux
 source .venv/bin/activate
 3. 安装依赖
-pip install httpx python-dotenv rich
+uv sync
 4. 配置 API Key
 cp .env.example .env
 # 编辑 .env，填入你的 API Key
@@ -64,7 +64,7 @@ week1_llm_cli/
 cat .env
 
 # 安装 Rich（如果没有）
-pip install rich
+uv add rich
 
 # 启动
 python -m app.main5
