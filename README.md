@@ -2,6 +2,8 @@
 
 基于 Python 的交互式大模型命令行聊天工具，支持连续对话、历史持久化和终端美化。
 
+注意：此项目是 Week 1 产出物，用于学习 Python MUP + HTTP + LLM API 封装 + CLI 交互。
+
 ## 功能
 
 - 支持 OpenAI-compatible API（DeepSeek / 通义千问 / OpenAI 等）
@@ -59,12 +61,18 @@ week1_llm_cli/
 
 **运行方式：**
 
-```bash
-# 确认 .env 已配置
-cat .env
+# 1. 安装依赖
+uv sync
 
-# 安装 Rich（如果没有）
-uv add rich
+# 2. 复制环境变量模板并填入真实值
+cp .env.example .env
+# 编辑 .env，填入 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
 
-# 启动
-python -m app.main5
+# 3. 确认 .env 不会被提交到 Git
+git status          # 不应看到 .env 出现在未跟踪文件里
+
+# 4. 启动
+python -m app.main
+
+# 5. 在对话中观察每条回复前的耗时显示
+# 6. 故意把 API Key 改错，观察错误提示是否清晰
