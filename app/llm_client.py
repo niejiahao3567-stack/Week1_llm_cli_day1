@@ -9,11 +9,20 @@ LLM API 客户端 —— 封装 OpenAI-compatible Chat Completions 调用。
 1. .env 中已设置 LLM_API_KEY、LLM_BASE_URL、LLM_MODEL
 2. 已安装 httpx：pip install httpx
 """
-# from __future__ import annotations
+
+"""
+app/llm_client.py（Day 6 重构版）
+同步 LLM 客户端 —— 接入 LLMAPIError + 耗时记录。
+
+改动点：
+  1. 用 LLMAPIError 替换原来的 LLMError（来自 exceptions.py）。
+  2. 每次 API 请求用 time.perf_counter() 记录耗时并返回。
+  3. 增加 HTTP 状态码的精确分类处理。
+"""
 
 import httpx
 import time
-from typing import Any
+from app.exceptions import LLMAPIError
 
 
 class LLMError(Exception):
@@ -25,6 +34,8 @@ class LLMError(Exception):
 
 
 class LLMClient:
+    """OpenAI-compatible Chat Completions API 同步封装。"""
+
     """OpenAI-compatible LLM API 客户端。
 
         用法：
@@ -38,12 +49,20 @@ class LLMClient:
         """
 
     def __init__(self, api_key: str, base_url: str, model: str, temperature: float = 0.7,
-                 timeout: float = 60.0) -> None:
+                 timeout: float = 30.0) -> None:
         # 去掉 base_url 末尾的斜杠，避免路径拼接时出现双斜杠
-        self._api_key = api_key
+        """初始化 LLM 客户端。
+
+        Args:
+            api_key: API Key，不含 "Bearer " 前缀。
+            base_url: API 基础地址，例如 https://api.deepseek.com。
+            model: 模型名称，例如 deepseek-chat。
+            timeout: HTTP 请求超时秒数，默认 30 秒。
+        """
+        # self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._model = model
-        self._temperature = temperature
+        #   self._temperature = temperature
 
         self._client = httpx.Client(
             base_url=self._base_url,
@@ -59,19 +78,19 @@ class LLMClient:
             prompt: str,
             system_prompt: str | None = None,
             history: list[dict[str, str]] | None = None,
-    ) -> str:
-        """发送对话请求，返回模型回复文本。
+    ) -> tuple[str, float]:
+        """发送聊天请求，返回 (回复文本, 耗时秒数)。
 
         Args:
-            prompt: 用户当前输入。
-            system_prompt: 系统角色设定，例如"你是一个专业的 Python 导师"。
-            history: 之前的对话历史，格式 [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}, ...]。
+            prompt: 用户消息。
+            system_prompt: 系统提示，可选。
+            history: 历史消息列表，每条包含 role 和 content。
 
         Returns:
-            模型回复的文本内容，已去除首尾空白。
+            (模型回复文本, 请求耗时秒数)
 
         Raises:
-            LLMError: API 调用失败、返回空响应或网络错误。
+            LLMAPIError: API 调用失败，包含错误消息和可选的 HTTP 状态码。
         """
         # 构建 messages 列表
 
@@ -79,72 +98,80 @@ class LLMClient:
 
         # system prompt 放在最前面，设定 AI 的行为
         if system_prompt:
-            messages.append({"role": "assistant", "content": system_prompt})
+            messages.append({"role": "system", "content": system_prompt})
 
         # 历史消息追加到中间，让模型记住上下文
         if history:
             messages.extend(history)
 
         # 当前用户输入放在最后
-        if prompt:
-            messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": prompt})
 
-        body = {
-            "model": self._model,
-            "messages": messages,
-            "temperature": self._temperature,
-        }
+        url = f"{self._base_url}/v1/chat/completions"
+        payload = {"model": self._model, "messages": messages}
 
-        start = time.perf_counter()
+        # 发请求并计时
+        t_start = time.perf_counter()
         try:
-            response = self._client.post("/v1/chat/completions", json=body)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            # 把 API 返回的错误详情带上，方便排查
-            detail = ""
-            try:
-                detail = exc.response.json()
-            except Exception:
-                detail = exc.response.text[:300]
-            msg = (
-                f"LLM API 返回 HTTP {exc.response.status_code}\n"
-                f"请求 URL: {self._base_url}/v1/chat/completions\n"
-                f"模型: {self._model}\n"
-                f"响应详情: {detail}"
+            response = self._client.post(url, json=payload)
+        except httpx.TimeoutException:
+            elapsed = time.perf_counter() - t_start
+            raise LLMAPIError(
+                f"请求超时（{elapsed:.1f}s），请检查网络或增加 timeout 设置"
             )
-            raise LLMError(msg, status_code=exc.response.status_code) from exc
-        except httpx.RequestError as exc:
-            msg = f"调用LLM API 时网络错误：{exc!r}"
-            raise LLMError(msg) from exc
+        except httpx.NetworkError as exc:
+            elapsed = time.perf_counter() - t_start
+            raise LLMAPIError(
+                f"网络连接失败（{elapsed:.1f}s）: {exc}"
+            )
+        elapsed = time.perf_counter() - t_start
 
-        data: dict[str, Any] = response.json()
-
-        # 安全提取回复内容
-        choices = data.get("choices", [])
-        if not choices:
-            raise LLMError(
-                f"LLM API 返回的 choices 为空，完整响应: {data}"
+        # 状态码分类处理
+        if response.status_code == 401:
+            raise LLMAPIError(
+                "API Key 无效或已过期，请检查 .env 中的 LLM_API_KEY",
+                status_code=401,
+            )
+        if response.status_code == 429:
+            raise LLMAPIError(
+                "API 调用频率超限，请稍后重试",
+                status_code=429,
+            )
+        if response.status_code >= 500:
+            raise LLMAPIError(
+                f"API 服务器错误 {response.status_code}，可稍后重试",
+                status_code=response.status_code,
+            )
+        if response.status_code != 200:
+            raise LLMAPIError(
+                f"API 返回非预期状态码 {response.status_code}: {response.text[:200]}",
+                status_code=response.status_code,
             )
 
-        message: dict[str, Any] = choices[0].get("message")
-        if message is None:
-            raise LLMError(
-                f"choices[0] 中没有 message 字段，完整响应: {choices[0]}"
-            )
+        # 安全解析响应
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise LLMAPIError(f"API 响应不是有效 JSON: {exc}")
 
-        content: str | None = message.get("content")
+        if not isinstance(data, dict):
+            raise LLMAPIError(f"API 响应格式异常: 期望 dict，实际 {type(data).__name__}")
+
+        choices = data.get("choices")
+        if not choices or not isinstance(choices, list) or len(choices) == 0:
+            raise LLMAPIError(f"API 响应中没有 choices 字段或为空: {data}")
+
+        message = choices[0].get("message")
+        if not message or not isinstance(message, dict):
+            raise LLMAPIError(f"choices[0].message 缺失或格式异常")
+
+        content = message.get("content")
         if content is None:
-            raise LLMError(
-                f"message 中没有 content 字段，message: {message}"
-            )
+            finish = choices[0].get("finish_reason", "unknown")
+            raise LLMAPIError(f"模型返回 content 为空，finish_reason={finish}")
 
-        elapsed = (time.perf_counter() - start) * 1000
-        print(f"[LLM] 模型={self._model} | 耗时={elapsed:.0f}ms | 回复长度={len(content)}字")
-
-        return content.strip()
+        return str(content), elapsed
 
     def close(self) -> None:
         """释放 HTTP 连接资源。"""
         self._client.close()
-
-

@@ -117,15 +117,21 @@ class ChatCLI:
     # ── 对话核心 ──
 
     def _chat_turn(self, user_input: str) -> None:
-        """一轮对话：发请求 → 打印回复 → 更新上下文 → 保存历史。"""
+        """一轮对话：发请求 → 打印回复（含耗时）→ 更新上下文 → 保存历史。"""
+        from app.exceptions import LLMAPIError
         try:
-            reply = self._client.chat(
+            reply, elapsed = self._client.chat(
                 prompt=user_input,
                 system_prompt=self._system_prompt,
                 history=self._messages if self._messages else None,
             )
-        except LLMError as exc:
+        except LLMAPIError as exc:
             _print(f"❌ LLM 调用失败: {exc}", "red")
+            # 根据状态码给出不同建议
+            if exc.status_code == 401:
+                _print("💡 请检查 .env 中的 LLM_API_KEY 是否正确。", "yellow")
+            elif exc.status_code and exc.status_code >= 500:
+                _print("💡 服务器错误，可稍后重试。", "yellow")
             return
 
         # 更新运行时上下文
@@ -137,7 +143,8 @@ class ChatCLI:
         if len(self._messages) > max_messages:
             self._messages = self._messages[-max_messages:]
 
-        # 打印回复
+        # 打印回复 + 耗时
+        _print(f"⏱️ [{elapsed * 1000:.0f}ms]", "dim")
         _print_markdown(reply)
 
         # 持久化保存
